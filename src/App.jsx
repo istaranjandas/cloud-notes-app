@@ -25,7 +25,14 @@ function App() {
       );
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        setNotes(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
+        const notesData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+        // Sort client-side to avoid Firestore index requirement
+        const sortedNotes = notesData.sort((a, b) => {
+          const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date();
+          const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date();
+          return dateB - dateA; // Descending order (newest first)
+        });
+        setNotes(sortedNotes);
       });
 
       return () => unsubscribe();
@@ -37,92 +44,120 @@ function App() {
   // 3. Handle Login
   const handleLogin = () => signInWithPopup(auth, googleProvider);
 
+  // State for the "Opened" note modal
+  const [selectedNote, setSelectedNote] = useState(null);
+
   // 4. Add a Note
-  const addNote = async (e) => {
-    e.preventDefault();
+  const addNote = async () => {
     if (!newNote.trim()) return;
     await addDoc(collection(db, "notes"), {
       text: newNote,
-      uid: user.uid
+      uid: user.uid,
+      createdAt: new Date()
     });
     setNewNote("");
   };
 
   // 5. Delete a Note
-  const deleteNote = (id) => deleteDoc(doc(db, "notes", id));
+  const deleteNote = async (id) => {
+    await deleteDoc(doc(db, "notes", id));
+    if (selectedNote?.id === id) setSelectedNote(null);
+  };
 
   return (
-    <div className="container">
-      <header className="header">
-        <h1>☁️ My Cloud Notes</h1>
-        <p className="subtitle">Your notes, everywhere you go</p>
-      </header>
-
+    <div className="app-container">
       {/* Login State */}
       {!user ? (
-        <div className="login-section">
-          <div className="login-card">
-            <h2>Welcome!</h2>
-            <p>Sign in with Google to access your notes from anywhere</p>
-            <button onClick={handleLogin} className="login-button">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M19.6 10.227c0-.709-.064-1.39-.182-2.045H10v3.868h5.382a4.6 4.6 0 01-1.996 3.018v2.51h3.232c1.891-1.742 2.982-4.305 2.982-7.35z" fill="#4285F4" />
-                <path d="M10 20c2.7 0 4.964-.895 6.618-2.423l-3.232-2.509c-.895.6-2.04.955-3.386.955-2.605 0-4.81-1.76-5.595-4.123H1.064v2.59A9.996 9.996 0 0010 20z" fill="#34A853" />
-                <path d="M4.405 11.9c-.2-.6-.314-1.24-.314-1.9 0-.66.114-1.3.314-1.9V5.51H1.064A9.996 9.996 0 000 10c0 1.614.386 3.14 1.064 4.49l3.34-2.59z" fill="#FBBC05" />
-                <path d="M10 3.977c1.468 0 2.786.505 3.823 1.496l2.868-2.868C14.959.99 12.695 0 10 0 6.09 0 2.71 2.24 1.064 5.51l3.34 2.59C5.192 5.736 7.396 3.977 10 3.977z" fill="#EA4335" />
-              </svg>
-              Sign in with Google
-            </button>
-          </div>
+        <div className="login-container">
+          <h1>Notes</h1>
+          <button onClick={handleLogin} className="btn-primary">
+            Sign in with Google
+          </button>
         </div>
       ) : (
-        <div className="main-content">
-          <div className="user-bar">
-            <div className="user-info">
-              {user.photoURL && (
-                <img src={user.photoURL} alt="Profile" className="user-avatar" />
-              )}
+        <>
+          {/* Header */}
+          <header className="top-bar">
+            <h1 className="app-title">Notes</h1>
+            <div className="profile-section">
               <span className="user-name">{user.displayName}</span>
+              <button onClick={() => signOut(auth)} className="btn-text">
+                Log Out
+              </button>
             </div>
-            <button onClick={() => signOut(auth)} className="logout-button">
-              Logout
-            </button>
-          </div>
+          </header>
 
-          {/* Input Form */}
-          <form onSubmit={addNote} className="note-form">
-            <input
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              placeholder="Write a note and press Enter..."
-              className="note-input"
-            />
-          </form>
+          <main className="main-content">
+            {/* Input Section */}
+            <div className="input-section">
+              <textarea
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="Write your note here..."
+                className="note-input"
+              />
+              <button onClick={addNote} className="btn-save">
+                Save
+              </button>
+            </div>
 
-          {/* List of Notes */}
-          <div className="notes-container">
-            {notes.length === 0 ? (
-              <div className="empty-state">
-                <p>📝 No notes yet. Start writing!</p>
-              </div>
-            ) : (
-              <div className="notes-grid">
+            {/* Saved Notes List */}
+            <div className="notes-list-container">
+              <div className="notes-list">
                 {notes.map((note) => (
-                  <div key={note.id} className="note-card">
-                    <p className="note-text">{note.text}</p>
-                    <button
-                      onClick={() => deleteNote(note.id)}
-                      className="delete-button"
-                      title="Delete"
-                    >
-                      ×
-                    </button>
+                  <div key={note.id} className="note-row">
+                    <span className="note-preview">
+                      {note.text.length > 50 ? note.text.substring(0, 50) + "..." : note.text}
+                    </span>
+                    <div className="row-actions">
+                      <button
+                        onClick={() => setSelectedNote(note)}
+                        className="btn-open"
+                      >
+                        Open
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteNote(note.id);
+                        }}
+                        className="btn-delete-small"
+                        title="Delete"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
                 ))}
+                {notes.length === 0 && (
+                  <div className="empty-state">No notes saved yet.</div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+          </main>
+
+          {/* Note Modal (The "Open" View) */}
+          {selectedNote && (
+            <div className="modal-overlay" onClick={() => setSelectedNote(null)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <div className="modal-meta">
+                    <span className="modal-label">CREATED AT</span>
+                    <span className="modal-date">
+                      {selectedNote.createdAt?.toDate ? selectedNote.createdAt.toDate().toLocaleString() : ""}
+                    </span>
+                  </div>
+                  <button onClick={() => setSelectedNote(null)} className="btn-close">
+                    ×
+                  </button>
+                </div>
+                <div className="modal-body">
+                  <p>{selectedNote.text}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
